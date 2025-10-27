@@ -1,33 +1,52 @@
-class Mininet_Simulation_Config:
-    def __init__(self, sensor_ids, num_clusters=1, sampling_freq=4, observation_time=10, transmission_size=1*1024, file_lines_per_chunk=5, transmission_frame_duration=1, num_transmission_frames=10000, local_simulation=True, remote_simulation_ip="", remote_simulation_port=""):
-        self.sensor_ids = sensor_ids
-        self.sampling_freq = sampling_freq
-        self.observation_time = observation_time
-        self.transmission_size = transmission_size
-        self.file_lines_per_chunk = file_lines_per_chunk # Remove
-        self.transmission_frame_duration = transmission_frame_duration # Remove
-        self.local_simulation = local_simulation
-        self.server_ip = remote_simulation_ip
-        self.port = remote_simulation_port
-        self.similarity_threshold = 4 # Should be arg
-        self.num_transmission_frames = num_transmission_frames # Remove
-        self.num_clusters = num_clusters
-        self.transmission_frequencies = [50, 100, 200, 400]
+class MininetSimulationConfig:
+    def __init__(self):
+        # TODO: Fix using multiple clusters
+        # A list of 2-element tuples, (ch_id, sensor_ids), where ch_id is the id of a cluster head 
+        # and sensor_ids is a list of ids of sensors assigned to that cluster head.
+        self.clusters = [(20, list([15,17,18,19,21,22,23,24,25,26]))
+                         ]
+        # The number of clusters that should be simulated 
+        self.num_clusters = 1
+        
+        # The time in seconds that data should be recorded when gathering an observation
+        self.observation_time = 0.04
 
+        # The amount of observations that should be collected before logging data
+        self.log_every = 500 
+        self.data_points_per_s = 400 
+        self.log_directory = f'data/log'
+        
+        # Window size to use when computing data delivery by node
+        self.window_size = 20
 
-class Multi_Agent_PPO_Config:
-    def __init__(self, batch_size=64, memory_capacity=256, gamma=0.99, tau=0.005, actor_lr=3e-4, critic_lr=1e-3, gae_lambda=0.99, policy_clip = 0.2, max_steps=100, num_episodes=99999999, train_every=2048, n_epochs=10):
-        self.batch_size = batch_size 
-        self.gamma = gamma 
-        self.tau = tau 
-        self.actor_lr = actor_lr
-        self.critic_lr = critic_lr
-        self.gae_lambda = gae_lambda
-        self.policy_clip = policy_clip
-        self.max_steps = max_steps
-        self.num_episodes = num_episodes
-        self.train_every = train_every
-        self.n_epochs = n_epochs
-        self.value_loss_coef = 0.5
-        self.entropy_coef = 0.00
+class SensorConfig:
+    def __init__(self):
+        # Size of each transmission in bytes
+        self.transmission_size = 1000 
+        
+        # Possible transmission frequencies (transmissions/s) 
+        # self.transmission_frequencies = [25, 50, 100, 200]
+        self.transmission_frequencies = [0, 200]
 
+        ############### Energy parameters ############### 
+        self.baseline_energy_dist = 10  # Baseline distance
+        self.baseline_energy_consumption = 5   # Baseline energy consumption
+        self.aE, self.kappaE = 1, 10
+        self.sense_energy = 1 * 0.001
+        
+        self.min_energy = 100.0
+        self.base_energy = 10000.0
+
+class MultiAgentDQNConfig:
+    def __init__(self):
+        self.batch_size = 64 
+        self.train_every = 16 
+        self.num_episodes = 999999
+        self.max_steps = 300
+        self.memory_capacity = 2000
+        self.lr = 1e-3
+        self.gamma = 0.999
+        self.eps_start = 1
+        self.eps_end = 0.01
+        self.eps_decay = 20000
+        self.tau = 0.005

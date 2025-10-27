@@ -7,6 +7,5 @@ tensorboard
 msgpack
 msgpack-numpy
 matplotlib
-pickle5
 dill
 pulp

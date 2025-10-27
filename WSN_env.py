@@ -1,62 +1,42 @@
 import os
+import subprocess
 import gymnasium as gym
 from gymnasium import spaces
 from torch import nn
 import torch
-from collections import deque, defaultdict
-import itertools
 import numpy as np
-import random
-import time
-import struct
-from scipy.stats import poisson
-from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
 import threading
 import multiprocessing
-import matplotlib.pyplot as plt
-import pickle
-import dill
-from configs import Mininet_Simulation_Config
+from helpers import create_mininet_network 
+import threading
+import queue
 
 class WSNEnvironment(gym.Env):
     metadata = {"render_modes": ["console"]}
+
+    def get_n_envs(self):
+        return self._n_clusters
+
+    def get_n_actions(self):
+        return self._n_actions
+
+    def get_n_sensors(self, cluster_idx):
+        return self._cluster_heads[cluster_idx].get_n_sensors()
     
-    def __establish_virtual_WSN_cluster(self, config):
-        if config.local_simulation:
-            from network import Network
-            # Create a local virtual cluster
-            self._network = Network(config)
-            
-            # Start the cluster thread
-            print("Local simulation requested. Starting network simulation.\n")
-            network_thread = threading.Thread(target=self._network.start, args=())
-            network_thread.start()
-            
-            # Give the cluster thread time to start up
-            print("Giving cluster thread time to start")
-            time.sleep(20)
-        else:
-            from remote_session_utils import Mininet_Remote_Session 
-
-            # Connect to a remote virtual cluster
-            print("Remote simulation requested. Attempting connect to remote virtual vluster\n")
-            self._cluster = Mininet_Remote_Session(self._num_sensors, config.server_ip, config.port)
-
-            # Give the cluster time to start up
-            time.sleep(10)
-
-    def __init__(self, sim_config, max_steps, device):
+    def __init__(self, sim_config, sensor_config, max_steps, device):
         super(WSNEnvironment, self).__init__()
+        subprocess.run(["rm", "-rf", sim_config.log_directory])
+        os.makedirs(sim_config.log_directory)
+
+        self._cluster_heads = create_mininet_network(sim_config, sensor_config, device)
+        self._n_clusters = len(self._cluster_heads)
+        self._step_counts = torch.tensor([0] * len(sim_config.clusters), device=device)
+        self._n_actions = len(sensor_config.transmission_frequencies)
         
         # Environment parameters
-        self._num_sensors = len(sim_config.sensor_ids)
         self._device = device
         self._max_steps = max_steps
-        self._num_clusters = sim_config.num_clusters
         
-        self.__establish_virtual_WSN_cluster(sim_config)
-
         ######################### Observation Space #########################
         # The observation space at time t is an (n+2) x n matrix. The ith row
         # in the matrix consists of the recorded temperature (temp_i), 
@@ -83,21 +63,18 @@ class WSNEnvironment(gym.Env):
         #                                ... 
         # |temp_n| |th_n| |tr_n| |sim_{n,1}| |sim_{n,2}| ... |sim_{n,n}|
         #####################################################################
-        self.observation_space = spaces.Box(low=-100, high=1000, shape=(self._num_sensors, self._num_sensors + 3,), dtype=np.float32)
+        # self.observation_space = spaces.Box(low=-100, high=1000, shape=(self._num_sensors, self._num_sensors + 3,), dtype=np.float32)
 
         ########################### Action Space ###########################
-        # The action space at time t is an n+1 vector. The first n entries
-        # correspond to transmisison rates (tr) for sensors. And the n+1th 
-        # entry is t' if the enviornment at time t' should be replayed
-        # and -1 otherwise. 
+        # The action space at time t is an n vector. The first n entries
+        # correspond to transmisison rates (tr) for sensors.
         #
         # Transmission Rate:
         #   Unit: Packets / Second
-        #   Range: 0 to 250
         #
-        # |tr_1| |tr_2| ... |tr_n| |replay|
+        # |tr_1| |tr_2| ... |tr_n|
         ####################################################################
-        self.action_space = spaces.MultiDiscrete(np.array([250] * (self._num_sensors + 1)))
+        #self.action_space = spaces.MultiDiscrete(np.array([n_actions] * ))
 
         # Internal state variables
         self.step_count = 0
@@ -113,54 +90,55 @@ class WSNEnvironment(gym.Env):
         self.similarity = 0
         self.similarity_penalty = 0
 
+    def _get_observations(self, actions):
+        result_queue = queue.Queue()
+        threads = []
+
+        for cluster_head, action in zip(self._cluster_heads, actions):
+            print("Action: ", action)
+            thread = threading.Thread(
+                target=lambda h, a: result_queue.put(h.get_observation(a)),
+                args=(cluster_head, action)
+            )
+            thread.start()
+            threads.append(thread)
+
+        for thread in threads:
+            thread.join()
+
+        observations = []
+        while not result_queue.empty():
+            observations.append(result_queue.get())
+
+        return observations
+
     def reset(self, seed=0):
         # Reset step count
-        self.step_count = 0
-    
-        # Set sensor transmission rates to 0 and observe the inital state 
-        observations = self._network.get_observation(np.zeros((self._num_clusters, self._num_sensors)))
+        self._step_counts[0] = 0
 
-        # state = |similarity, rates, throughput|
-        # self._states = (np.column_stack(tuple((obs[0], obs[3], obs[1]))) for obs in observations)
-        # self._states = (torch.tensor(state, dtype=torch.float32, device=self._device).squeeze() for state in self._states)
-        # self._states = tuple(torch.flatten(state).detach() for state in self._states)
-        #_, self._states, _ = zip(*observations)
-        _, connectivity_graphs, redundancy_graphs, _ = zip(*observations)
-        self._states = list(zip(connectivity_graphs, redundancy_graphs))
+        default_actions = []
+        for cluster_head in self._cluster_heads:
+            n_sensors = cluster_head.get_n_sensors()
+            a = [0] * n_sensors
+            default_actions.append(a)
+            cluster_head.recharge()
+        
+        observations = self._get_observations(default_actions)
+
+        _, _, self._states, _ = zip(*observations)
 
         return self._states, self.info
 
     def step(self, new_rates_id, actions):
         # Execute one step in the environment
-        truncated = [bool(self.step_count > self._max_steps)]
-        terminated = [False]
-        rewards = [{
-                "throughput": [0] * self._num_sensors,
-                "similarity": [0] * self._num_sensors
-                }] * self._num_clusters
-        
-        # Check termination condition
-        if truncated[0]:
-            print("Episode terminated")
-            terminated = [True]
-            return self._states, rewards, terminated, truncated, self.info
-
-        self.step_count += 1
+        self._step_counts += 1
+        truncated = self._step_counts > self._max_steps
         actions = (action.cpu().detach().numpy() for action in actions)
-        observations = self._network.get_observation(actions)
         
-        # state = |similarity, rates, throughput|
-        #self._states = (np.column_stack(tuple((obs[0], obs[3], obs[1]))) for obs in observations)
-        #self._states = (torch.tensor(state, dtype=torch.float32, device=self._device).squeeze() for state in self._states)
-        #self._states = tuple((torch.flatten(state) for state in self._states))
-        #rewards = tuple((obs[2] for obs in observations))
-        terminated, connectivity_graphs, redundancy_graphs, rewards = zip(*observations)
-        self._states = list(zip(connectivity_graphs, redundancy_graphs))
+        observations = self._get_observations(actions)
+        
+        awake, terminated, self._states, rewards = zip(*observations)
+        terminated = torch.tensor(terminated, device=self._device)
+        print("Rewards: ", rewards)
 
-
-        #print("Sim: ", [obs[0] for obs in observations])
-        #print("Rates: ", [obs[3] for obs in observations])
-        #print("Throughput: ", [obs[1] for obs in observations])
-        print("Rewards: ", [r["throughput"] for r in rewards])
-
-        return self._states, rewards, terminated, truncated, self.info
+        return self._states, rewards, awake, terminated, truncated, self.info
