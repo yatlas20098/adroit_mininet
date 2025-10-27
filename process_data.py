@@ -197,6 +197,7 @@ xs = [np.arange(minLen*10)/200 for _ in y]
 create_multiplot(y, 'Sensor Temperature over Simulation Time', 'Time', 'Temperature', labels, f'temp/unfiltered_sensortemps', xs)
 exit(0)
 """
+
 #####################################################################
 # Load simulation data
 rl_agent_log_path = 'rl_agent_figure_data.pkl'
@@ -211,7 +212,7 @@ with open(sim_log_path, 'rb') as file:
     messages_log, n_events_detected_log, freq_log, energy_log, throughputs_log = data
 
 s = 10 
-a = 20000
+# a = 20000
 rate_log = freq_log[s:]
 reward_log = rewards_log[s:]
 throughputs_log = np.stack(throughputs_log)[s:]
@@ -231,8 +232,9 @@ active_by_episode = []
 unique_by_episode = []
 start = 0
 n_events_detected = n_events_detected_log
+print(energy_log)
 for i in range(n_obs-1):
-    if(max(energy_log[i]) <= 2000 and max(energy_log[i + 1]) >= 5000):
+    if(max(energy_log[i]) <= 5000 and max(energy_log[i + 1]) >= 9000):
         energy_by_episode.append(energy[start: i+1])
         active_by_episode.append(active_nodes[start: i+1])
         for j in range(start + 1, min(i + 1, len(n_events_detected))):
