@@ -55,14 +55,14 @@ def _long_lat_to_cartesian(center_tower_id, tower_coords):
 
     return tower_coords_cartesian_normalized
 
-def _get_datasets(sensor_ids, data_points_per_s, dataset_directory='data/towerdataset'):
+def _get_datasets(sensor_ids, data_points_scale, dataset_directory='data/towerdataset'):
     datasets = {}
     event_times = {}
     min_dataset_len = float('inf')
     for sensor_id in sensor_ids:
         file_path = f'{dataset_directory}/tower{sensor_id}Data_processed.csv'
         if os.path.exists(file_path):
-            datasets[sensor_id], dataset_length_s, event_times[sensor_id] = _interpolate_dataset(file_path, data_points_per_s)
+            datasets[sensor_id], dataset_length_s, event_times[sensor_id] = _interpolate_dataset(file_path, data_points_scale)
             min_dataset_len = min(min_dataset_len, dataset_length_s)
         else:
             print(f"Warning: Dataset file not found for sensor {sensor_id}: {file_path}")
@@ -82,7 +82,7 @@ def create_mininet_network(sim_config, sensor_config, device):
     net = Mininet_wifi(controller=Controller, link=wmediumd, wmediumd_mode=interference)
     for cluster_idx, (cluster_head_id, sensor_ids) in enumerate(sim_config.clusters):
         cluster_head_ip, cluster_head_station, sensor_stations, ap = _create_mininet_cluster(net, tower_coords, cluster_idx, cluster_head_id, sensor_ids)
-        datasets, min_dataset_len, event_times = _get_datasets(sensor_ids, sim_config.data_points_per_s)
+        datasets, min_dataset_len, event_times = _get_datasets(sensor_ids, sim_config.data_points_scale)
 
         cluster_head_coords = tower_coords[cluster_head_id] 
         sensors = []
@@ -141,7 +141,7 @@ Args:
 Returns:
     scipy function: function for interpolated data 
 """
-def _interpolate_dataset(dataset_dir, data_points_per_s, maxlen=100000000):
+def _interpolate_dataset(dataset_dir, data_points_scale, maxlen=100000000):
     # from scipy.ndimage import median_filter
 
     # Cache the dataset into memory 
@@ -150,13 +150,27 @@ def _interpolate_dataset(dataset_dir, data_points_per_s, maxlen=100000000):
 
         # Skip the first 4 lines
         data = []
+        xs = []
+        prev_t = 0
+        n_roll_over = 0
+
         for line in lines:
             if len(data) > maxlen:
                 break
             try:
                 # Split the line and try to convert the temperature value (9th column, index 8) to float
-                temperature = np.float32(line.strip().split(',')[8])
+                row = line.strip().split(',')
+                t = np.float32(row[0])
+                if t < prev_t:
+                    n_roll_over += 1
+
+                temperature = np.float32(row[8])
                 data.append(temperature)
+                sec_in_hr = 3600
+                xs.append(t + (n_roll_over*sec_in_hr))
+
+                prev_t = t
+
             except (ValueError, IndexError):
                 # If conversion fails or the line doesn't have enough columns, skip this line
                 continue
@@ -164,9 +178,10 @@ def _interpolate_dataset(dataset_dir, data_points_per_s, maxlen=100000000):
         # Remove sharp jumps
         # data = median_filter(data, size=3)
 
-        xs = np.arange(len(data)) / (data_points_per_s)
+        # xs = np.arange(len(data)) / (data_points_per_s)
+        xs = np.array(xs) / data_points_scale
         interp_func = scipy.interpolate.interp1d(xs, data, kind='previous', fill_value='extrapolate')
-        dataset_length_s = len(data)/(data_points_per_s)
+        dataset_length_s = max(xs)
         event_times = _get_event_times(data, xs)
 
         return interp_func, dataset_length_s, event_times
@@ -195,7 +210,6 @@ def _get_event_times(data, xs):
 
     event_times = xs[event_idx]
     return event_times 
-    
 
 def _create_mininet_cluster(net, tower_coords, cluster_idx, cluster_head_id, sensor_ids):
         channel = 6

@@ -20,7 +20,7 @@ class MininetSimulationConfig:
         
         # The amount of observations that should be collected before logging data
         self.log_every = 500 
-        self.data_points_per_s = 400 
+        self.data_points_scale = 300
         self.log_directory = f'data/log'
         
         # Window size to use when computing data delivery by node

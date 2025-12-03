@@ -117,7 +117,7 @@ class ClusterHead():
 
     def _get_n_events_detected(self, time_messages_sent):
         event_times_detected = set()
-        time_inc = 1 / self._sim_config.data_points_per_s
+        time_inc = 1 / self._sim_config.data_points_scale
         prev_event_times = set(self._prev_event_times)
 
         for s, times in time_messages_sent.items():
@@ -244,11 +244,11 @@ class ClusterHead():
         # rewards = self._get_reward(state)
         
         rewards = self._get_reward(energy, awake)
-        self._logs.update_logs(messages, n_events_detected, throughputs, freqs, energy, rewards)
+        self._logs.update_logs(messages, time_messages_sent, n_events_detected, throughputs, freqs, energy, rewards)
 
         state = from_networkx(g).to(self._device)
         
-        # Handle edge case for graph with only 1 node
+        # Handle edge case for graph with 0 or 1 nodes
         if 'weight' not in state:
             state.weight = torch.zeros((0, 1), device=self._device)
         elif state.weight.dim() == 1:
@@ -370,7 +370,7 @@ class ClusterHead():
     Args:
         file_path (string): Path to file with received data 
         sensor_id (int): ID of the sensor whose data should be read 
-
+(
     Returns:
         String List: List of received packets 
     """

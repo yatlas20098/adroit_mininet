@@ -5,8 +5,6 @@ import scipy
 from scipy.ndimage import median_filter
 import numpy as np
 
-
-
 def create_multiplot(datasets, title, xlabel, ylabel, legend_labels, output_name, xs=None):
     print(f"Plotting {output_name}...")
     plt.figure(figsize=(6,6))
@@ -62,16 +60,31 @@ def read_temperature_data(file_path):
         with open(file_path, 'r') as file:
             # Skip the first 4 lines
             data = []
+            time = []
+            prev_t = 0
+            n_roll_over = 0
+
             for line in file:
                 try:
                     # Split the line and try to convert the temperature value (9th column, index 8) to float
-                    temperature = np.float32(line.strip().split(',')[8])
+                    row = line.strip().split(',')
+                    temperature = np.float32(row[8])
+                    t = np.float32(row[0])
+                    
+                    # Time Roll over
+                    if t < prev_t:
+                        n_roll_over += 1
+                    
                     data.append(temperature)
+
+                    s_per_hr = 3600
+                    time.append(t + (n_roll_over*s_per_hr))
+
+                    prev_t = t
                 except (ValueError, IndexError):
                     # If conversion fails or the line doesn't have enough columns, skip this line
                     continue
-
-        return np.array(data)[::30][:20]
+        return (np.array(data), np.array(time))
 
 def mean_energy_create_plot(data, title, xlabel, ylabel, output_name, x=None, average=0, start_step=0, clip=-100):
     plt.figure(figsize=(6,6))
@@ -113,8 +126,6 @@ def plot_active(data, title, xlabel, ylabel, output_name, x=None, average=0, sta
     if x is None:
         x = list(range(start_step, start_step + len(data)))
 
-
-
     mean = np.mean(data, axis=0)[:300]
     std = np.std(data, axis=0)[:300]
 
@@ -140,8 +151,6 @@ def plot_active(data, title, xlabel, ylabel, output_name, x=None, average=0, sta
     plt.grid(True)
     plt.close()
     print(f"Done plotting\n")
-
-
 
 def plot_active(Repeat):
     label_list = ['No RL', 'RL']
@@ -175,41 +184,51 @@ def plot_active(Repeat):
     plt.show()
 
 datasets = []
+xs_list = []
 labels = []
 
+# ids = list(range(15, 40)) 
+ids = list([15,17,18,19,21,22,23,24,25,26])
+# ids = list([8, 11])
+# ids = list(range(1, 35)) + list(range(19, 24)) 
 
-"""
-ids = list(range(15, 27)) 
 def remove_spikes(data, threshold=8):
     data = np.array(data)
-    #filtered = median_filter(data, size=3)
-    filtered = data
+    filtered = median_filter(data, size=10)
+    # filtered = data
     return filtered 
 
 # Load sensor temperature data
 for sensor_id in ids:
     try:
         file_path = f'data/towerdataset/tower{sensor_id}Data_processed.csv'
-        dataset = read_temperature_data(file_path)
+        dataset, time = read_temperature_data(file_path)
         if(len(dataset) > 0):
-            clean = remove_spikes(dataset)
-            datasets.append(clean)
+            dataset = remove_spikes(dataset)
+            datasets.append(dataset)
+            xs_list.append(time/300)
             labels.append(f'S{sensor_id}')
-        #create_plot(tempdata, f'Sensor {sensor_id} Temperature', 'Step', 'Temperature', f'temp/sensor{sensor_id}temp')
+        create_plot(tempdata, f'Sensor {sensor_id} Temperature', 'Step', 'Temperature', f'temp/sensor{sensor_id}temp')
     except:
         print("error")
+
 min_data_len = min((len(data) for data in datasets))
 datasets = [data[:min_data_len] for data in datasets] 
-minLen = min(len(data) for data in datasets)
-xs = np.arange(minLen)
-interp_funcs = [scipy.interpolate.interp1d(xs, data, kind='previous', fill_value='extrapolate') for data in datasets]
-y = [[interp_func(x/10) for x in range(0, minLen*10)] for interp_func in interp_funcs]
-#print(len(y[0]))
-xs = [np.arange(minLen*10)/200 for _ in y]
+xs_list = [xs[:min_data_len] for xs in xs_list] 
+interp_funcs = [scipy.interpolate.interp1d(xs, data, kind='previous', fill_value='extrapolate') for (data, xs) in zip(datasets, xs_list)]
+
+t_s = 14
+t_e = 40
+inc = 1 / 2000
+
+xs = np.arange(t_s, t_e, inc)
+print(xs)
+y = [[func(x) for x in xs] for func in interp_funcs]
+# clipped_xs_list = [xs[s:s + e] for xs in xs_list]
+wrapped_xs = [xs for _ in interp_funcs]
 
 # Plot sensor temperature data
-create_multiplot(y, 'Sensor Temperature over Simulation Time', 'Time', 'Temperature', labels, f'temp/unfiltered_sensortemps', xs)
-"""
+create_multiplot(y, 'Sensor Temperature over Simulation Time', 'Time', 'Temperature', labels, f'temp/unfiltered_sensortemps', wrapped_xs)
 
 #####################################################################
 # Load simulation data
